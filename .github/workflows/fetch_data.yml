@@ -1,0 +1,29 @@
+name: Fetch air quality data daily
+
+on:
+  schedule:
+    - cron: "0 6 * * *"   # every day at 06:00 UTC -- edit if you want a different time
+  workflow_dispatch:        # lets you also trigger it manually from the "Actions" tab
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install requests
+
+      - run: python fetch_air_quality.py
+        env:
+          WAQI_TOKEN: ${{ secrets.WAQI_TOKEN }}
+
+      - uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "Auto-update air quality data"
+          file_pattern: data/air_quality.csv
