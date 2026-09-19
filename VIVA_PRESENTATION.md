@@ -1,21 +1,29 @@
 # VIVA VOCE PRESENTATION SCRIPT & DECK STRUCTURE
 
-## Locality-Level Air and Noise Pollution Mapping Dashboard
-* **Document Type**: Oral Examination Deck Outline, Slide Script & Viva Preparation Guide
+## Air and Noise Pollution Mapping
+* **Name of the Student**: Manav Singh
+* **Roll No. / Seat No.**: 26753
+* **Class / Program**: B.Sc. T.Y. CS
+* **Name of the Faculty Mentor**: Seema Sharma
+* **Name of the Institute / College**: Kalyan Welfare Society's Model College of Science and Commerce
+* **Academic Year**: 2025–2026
 * **Domain**: Environmental Informatics, Data Science, Geographic Information Systems (GIS)
-* **Student Name / Author**: Manav Singh
-* **Repository**: [https://github.com/manavssingh/Pollution-Mapper](https://github.com/manavssingh/Pollution-Mapper)
+* **Project Repository**: [https://github.com/manavssingh/Pollution-Mapper](https://github.com/manavssingh/Pollution-Mapper)
 
 ---
 
 ## SLIDE-BY-SLIDE PRESENTATION STRUCTURE
 
 ### SLIDE 1: TITLE SLIDE
-* **Slide Title**: Locality-Level Air and Noise Pollution Mapping and Surveillance Dashboard
+* **Slide Title**: Air and Noise Pollution Mapping
 * **Subtitle**: An Autonomous, Serverless GIS Platform for Multi-Pollutant Environmental Monitoring
-* **Candidate Details**: Name, Roll Number, Department / Faculty Guidance
+* **Candidate Details**: 
+  * Student: Manav Singh (Roll No.: 26753)
+  * Class: B.Sc. T.Y. CS (Academic Year: 2025–2026)
+  * Faculty Mentor: Seema Sharma
+  * Institute: Kalyan Welfare Society's Model College of Science and Commerce
 * **What to Say (Script)**:
-  > *"Respected external examiner and faculty members, good morning. Today, I am presenting my field project entitled 'Locality-Level Air and Noise Pollution Mapping and Surveillance Dashboard'. This project bridges the gap between public atmospheric monitoring and local acoustic surveillance through an interactive, serverless web platform."*
+  > *"Respected external examiner, faculty mentor Prof. Seema Sharma, and faculty members, good morning. I am Manav Singh from B.Sc. T.Y. Computer Science, Roll Number 26753. Today, I am presenting my field project entitled 'Air and Noise Pollution Mapping'. This project bridges the gap between public atmospheric monitoring and local acoustic surveillance through an interactive, serverless web platform."*
 
 ---
 

@@ -1,7 +1,12 @@
 # PROJECT PLANNING & DESIGN DOCUMENT
 
-## Locality-Level Air and Noise Pollution Mapping Dashboard
-* **Document Type**: Project Planning, Instrumentation Design, and Survey Protocol
+## Air and Noise Pollution Mapping
+* **Name of the Student**: Manav Singh
+* **Roll No. / Seat No.**: 26753
+* **Class / Program**: B.Sc. T.Y. CS
+* **Name of the Faculty Mentor**: Seema Sharma
+* **Name of the Institute / College**: Kalyan Welfare Society's Model College of Science and Commerce
+* **Academic Year**: 2025–2026
 * **Domain**: Environmental Informatics, Human-Computer Interaction (HCI), Field Research Design
 * **Project Repository**: [https://github.com/manavssingh/Pollution-Mapper](https://github.com/manavssingh/Pollution-Mapper)
 

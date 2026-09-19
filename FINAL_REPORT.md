@@ -1,10 +1,13 @@
 # FINAL PROJECT REPORT
 
-## Locality-Level Air and Noise Pollution Mapping and Automated Surveillance Dashboard
-* **Document Type**: Final Academic Field Project Report
-* **Course / Subject**: Core Engineering / Environmental Informatics Field Project
-* **Candidate Name**: Manav Singh
-* **Repository**: [https://github.com/manavssingh/Pollution-Mapper](https://github.com/manavssingh/Pollution-Mapper)
+## Air and Noise Pollution Mapping
+* **Course / Program**: B.Sc. T.Y. CS
+* **Name of the Student**: Manav Singh
+* **Roll No. / Seat No.**: 26753
+* **Name of the Faculty Mentor**: Seema Sharma
+* **Name of the Institute / College**: Kalyan Welfare Society's Model College of Science and Commerce
+* **Academic Year**: 2025–2026
+* **Project Repository**: [https://github.com/manavssingh/Pollution-Mapper](https://github.com/manavssingh/Pollution-Mapper)
 
 ---
 

@@ -1,10 +1,14 @@
 # FIELD VISIT REPORT
 
-## Environmental Field Study: Locality-Level Air Quality & Acoustic Noise Surveillance
-* **Project Name**: Pollution-Mapper (Field Surveillance Project)
+## Air and Noise Pollution Mapping (Field Surveillance Study)
+* **Name of the Student**: Manav Singh
+* **Roll No. / Seat No.**: 26753
+* **Class / Program**: B.Sc. T.Y. CS
+* **Name of the Faculty Mentor**: Seema Sharma
+* **Name of the Institute / College**: Kalyan Welfare Society's Model College of Science and Commerce
+* **Academic Year**: 2025–2026
 * **Domain**: Environmental Informatics, Urban Ecology, Field Data Collection
-* **Study Region**: Urban Municipal Area & Surrounding Microclimates (Pune Metropolitan Corridor)
-* **Survey Period**: September 2026
+* **Project Repository**: [https://github.com/manavssingh/Pollution-Mapper](https://github.com/manavssingh/Pollution-Mapper)
 
 ---
 
