@@ -150,13 +150,16 @@ flowchart LR
    \end{cases}$$
    All entries are transparently tagged in the UI as *Estimated Urban Model* versus *Verified Field Data*.
 
-### 4.2 Client Geolocation Resolution Algorithm
+### 4.2 Client Geolocation & Dynamic Synchronization Algorithm
+The system combines client IP resolution with an active locality state controller that fetches live environmental metrics, computes acoustic traffic baselines, and synchronizes the user interface:
+
 ```python
 def detect_client_location():
+    """Resolve client IP address to geographic coordinates."""
     client_ip = None
     if hasattr(st, "context") and hasattr(st.context, "headers"):
         headers = st.context.headers
-        forwarded = headers.get("X-Forwarded-For") or headers.get("x-forwarded-for")
+        forwarded = headers.get("CF-Connecting-IP") or headers.get("X-Forwarded-For")
         if forwarded:
             client_ip = forwarded.split(",")[0].strip()
 
@@ -166,6 +169,20 @@ def detect_client_location():
         data = resp.json()
         return data["city"], float(data["lat"]), float(data["lon"]), f"{data['city']}, {data.get('regionName','')}"
     return None, None, None, None
+
+def activate_and_load_locality(name, lat, lon, is_user_location=False):
+    """Retrieve live metrics, persist to CSV, clear cache, and synchronize all UI metrics."""
+    aqi, pm25, pm10 = fetch_live_aqi(lat, lon)
+    est_noise = estimate_urban_noise(datetime.now().hour)
+    if aqi is not None:
+        save_air_reading(name, lat, lon, aqi)
+        save_noise_reading(name, lat, lon, est_noise, date.today().isoformat(), ...)
+        st.cache_data.clear()
+        st.session_state.active_locality = name
+        st.session_state.active_aqi = aqi
+        st.session_state.active_noise = est_noise
+        st.session_state.map_center = {"lat": lat, "lon": lon}
+        st.session_state.map_zoom = 13
 ```
 
 ### 4.3 Data Storage Schema
