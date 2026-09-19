@@ -45,6 +45,25 @@ def aqi_label(aqi: float) -> str:
     return "Hazardous (500+)" if aqi > 500 else "Unknown"
 
 
+def health_recommendation(aqi: float, noise: float) -> str:
+    """Generate contextual health advisory based on joint exposure."""
+    if pd.isna(aqi):
+        return "Environmental data pending."
+    aqi_val = float(aqi)
+    noise_val = float(noise) if pd.notna(noise) else 60.0
+
+    if aqi_val <= 50 and noise_val <= 55:
+        return "🟢 Optimal: Clean air & comfortable acoustic levels. Safe for all outdoor activities."
+    elif aqi_val <= 100 and noise_val <= 65:
+        return "🟡 Moderate: Acceptable air quality; typical commercial noise. Sensitive individuals monitor symptoms."
+    elif aqi_val <= 150 or noise_val > 70:
+        return "🟠 Elevated Risk: Significant traffic noise & sensitive air alerts. Limit prolonged outdoor workouts."
+    elif aqi_val <= 200:
+        return "🔴 Unhealthy: Wear an N95 mask outdoors and avoid high-traffic corridors."
+    else:
+        return "🟣 Severe Hazard: Emergency air alert. Avoid outdoor exposure; use indoor air filtration."
+
+
 def estimate_urban_noise(hour: int) -> float:
     """
     Estimate typical urban commercial/arterial road ambient noise (dB)
@@ -69,7 +88,7 @@ def detect_client_location():
         # Check Streamlit request headers if deployed on cloud
         if hasattr(st, "context") and hasattr(st.context, "headers"):
             headers = st.context.headers
-            forwarded = headers.get("X-Forwarded-For") or headers.get("x-forwarded-for")
+            forwarded = headers.get("CF-Connecting-IP") or headers.get("cf-connecting-ip") or headers.get("X-Forwarded-For") or headers.get("x-forwarded-for")
             if forwarded:
                 client_ip = forwarded.split(",")[0].strip()
     except Exception:
@@ -85,8 +104,7 @@ def detect_client_location():
                 lat = float(data.get("lat"))
                 lon = float(data.get("lon"))
                 region = data.get("regionName", "")
-                country = data.get("country", "")
-                full_name = f"{city}, {region}" if region else (f"{city}, {country}" if country else city)
+                full_name = f"{city}, {region}" if region else city
                 return city, lat, lon, full_name
     except Exception:
         pass
@@ -241,15 +259,56 @@ def load_noise_data() -> pd.DataFrame:
         return pd.DataFrame(columns=["locality", "lat", "lon", "decibel", "date_recorded", "time_of_day", "notes"])
 
 
-# ---------------- State Management & Automatic Geolocation ----------------
+def activate_and_load_locality(name: str, lat: float, lon: float, is_user_location: bool = False):
+    """Fetch live data, persist to CSV, clear cache, and immediately focus all dashboard metrics."""
+    aqi, pm25, pm10 = fetch_live_aqi(lat, lon)
+    cur_hr = datetime.now().hour
+    est_noise = estimate_urban_noise(cur_hr)
+    time_lbl = "Morning" if 6 <= cur_hr < 12 else ("Afternoon" if 12 <= cur_hr < 17 else ("Evening" if 17 <= cur_hr < 21 else "Night"))
+
+    if aqi is not None:
+        save_air_reading(name, lat, lon, aqi)
+        note_text = f"Auto-Detected Live Location ({time_lbl})" if is_user_location else f"Estimated Urban Baseline ({time_lbl})"
+        save_noise_reading(
+            name,
+            lat,
+            lon,
+            est_noise,
+            date.today().isoformat(),
+            time_lbl,
+            note_text
+        )
+        st.cache_data.clear()
+
+        st.session_state.active_locality = name
+        st.session_state.active_lat = lat
+        st.session_state.active_lon = lon
+        st.session_state.active_aqi = aqi
+        st.session_state.active_noise = est_noise
+        st.session_state.map_center = {"lat": lat, "lon": lon}
+        st.session_state.map_zoom = 13
+        st.session_state.sidebar_lat = lat
+        st.session_state.sidebar_lon = lon
+        st.session_state.sidebar_locality = name
+        return True, aqi, est_noise
+    return False, None, None
+
+
+# ---------------- Session State Initialization ----------------
 if "map_center" not in st.session_state:
     st.session_state.map_center = None
 if "map_zoom" not in st.session_state:
     st.session_state.map_zoom = None
-if "user_city" not in st.session_state:
-    st.session_state.user_city = None
-if "user_full_location" not in st.session_state:
-    st.session_state.user_full_location = None
+if "active_locality" not in st.session_state:
+    st.session_state.active_locality = None
+if "active_lat" not in st.session_state:
+    st.session_state.active_lat = None
+if "active_lon" not in st.session_state:
+    st.session_state.active_lon = None
+if "active_aqi" not in st.session_state:
+    st.session_state.active_aqi = None
+if "active_noise" not in st.session_state:
+    st.session_state.active_noise = None
 if "geo_initialized" not in st.session_state:
     st.session_state.geo_initialized = False
 if "sidebar_lat" not in st.session_state:
@@ -259,59 +318,37 @@ if "sidebar_lon" not in st.session_state:
 if "sidebar_locality" not in st.session_state:
     st.session_state.sidebar_locality = ""
 
-# Auto-detect live user position on initial visit
+# Auto-detect live user position on very first page load
 if not st.session_state.geo_initialized:
     detected_city, det_lat, det_lon, det_fullname = detect_client_location()
     if detected_city and det_lat and det_lon:
-        st.session_state.user_city = detected_city
-        st.session_state.user_full_location = det_fullname
-        st.session_state.map_center = {"lat": det_lat, "lon": det_lon}
-        st.session_state.map_zoom = 12
-        st.session_state.sidebar_lat = det_lat
-        st.session_state.sidebar_lon = det_lon
-        st.session_state.sidebar_locality = det_fullname
-
-        # Automatically fetch and log live environmental readings for the user's city
-        live_aqi, live_pm25, live_pm10 = fetch_live_aqi(det_lat, det_lon)
-        if live_aqi is not None:
-            cur_hr = datetime.now().hour
-            cur_noise = estimate_urban_noise(cur_hr)
-            time_lbl = "Morning" if 6 <= cur_hr < 12 else ("Afternoon" if 12 <= cur_hr < 17 else ("Evening" if 17 <= cur_hr < 21 else "Night"))
-
-            save_air_reading(det_fullname, det_lat, det_lon, live_aqi)
-            save_noise_reading(
-                det_fullname,
-                det_lat,
-                det_lon,
-                cur_noise,
-                date.today().isoformat(),
-                time_lbl,
-                f"Estimated Baseline (Live Visitor Local Model, {time_lbl})"
-            )
-            st.cache_data.clear()
-
+        activate_and_load_locality(det_fullname, det_lat, det_lon, is_user_location=True)
     st.session_state.geo_initialized = True
 
 # ---------------- Sidebar ----------------
 with st.sidebar:
-    st.header("⚙️ Controls & Data Entry")
+    st.header("⚙️ Controls & Entry")
 
     if st.button("🔄 Refresh Data", width="stretch"):
         st.cache_data.clear()
         st.rerun()
 
-    if st.button("🎯 Jump to My Live Location", width="stretch"):
-        d_city, d_lat, d_lon, d_name = detect_client_location()
-        if d_city and d_lat and d_lon:
-            st.session_state.user_city = d_city
-            st.session_state.user_full_location = d_name
-            st.session_state.map_center = {"lat": d_lat, "lon": d_lon}
-            st.session_state.map_zoom = 12
-            st.session_state.sidebar_lat = d_lat
-            st.session_state.sidebar_lon = d_lon
-            st.session_state.sidebar_locality = d_name
-            st.success(f"Focused on your live location: {d_name}!")
-            st.rerun()
+    st.markdown("---")
+    st.subheader("🎯 Jump to My Location")
+    st.caption("Automatically detect and load your live city's real-time pollution metrics.")
+
+    if st.button("📍 Detect & Load My Live Location", width="stretch"):
+        with st.spinner("Locating your device and fetching live metrics..."):
+            d_city, d_lat, d_lon, d_name = detect_client_location()
+            if d_city and d_lat and d_lon:
+                ok, aqi_val, noise_val = activate_and_load_locality(d_name, d_lat, d_lon, is_user_location=True)
+                if ok:
+                    st.success(f"📍 Successfully loaded **{d_name}**! Live AQI: **{int(round(aqi_val))}** | Sound: **{noise_val:.1f} dB**")
+                    st.rerun()
+                else:
+                    st.warning(f"Located {d_name}, but external sensor feeds were unreachable.")
+            else:
+                st.error("Could not determine your device location. Please search your city in the main search bar.")
 
     st.markdown("---")
     st.subheader("➕ Submit Field Noise Reading")
@@ -346,21 +383,25 @@ with st.sidebar:
                     f"Field Measurement: {note_text}"
                 )
                 st.cache_data.clear()
+                st.session_state.active_locality = form_locality.strip()
+                st.session_state.active_lat = form_lat
+                st.session_state.active_lon = form_lon
+                st.session_state.active_noise = form_db
                 st.session_state.map_center = {"lat": form_lat, "lon": form_lon}
-                st.session_state.map_zoom = 12
+                st.session_state.map_zoom = 13
                 st.success(f"Added verified reading for {form_locality}!")
                 st.rerun()
 
     st.markdown("---")
-    st.info("💡 **Methodology**: Field readings are saved as *Primary Measurements*, while unmonitored global cities use *WHO Urban Baseline Models*.")
+    st.info("💡 **Methodology**: Physical sound meter measurements are saved as *Verified Field Data*, while unmonitored global cities use *WHO Urban Baseline Models*.")
 
 
 # ---------------- Header & Geolocation Banner ----------------
 st.title("🌍 Air & Noise Pollution Mapping Dashboard")
-st.caption("Locality-level environmental monitoring, live auto-localization, and multi-pollutant surveillance")
+st.caption("Locality-level environmental surveillance, dynamic live auto-localization, and multi-pollutant analytics")
 
-if st.session_state.user_full_location:
-    st.info(f"📍 **Auto-Detected Live Position**: You are viewing data focused on **{st.session_state.user_full_location}**. The map and local indicators below are centered on your area.")
+if st.session_state.active_locality:
+    st.info(f"📍 **Currently Focused Locality**: **{st.session_state.active_locality}** | All metrics, health advisories, and maps below are dynamically aligned with this area.")
 
 # ---------------- Global City/Locality Search Bar ----------------
 search_container = st.container()
@@ -368,7 +409,7 @@ with search_container:
     col_s1, col_s2 = st.columns([4, 1])
     with col_s1:
         search_query = st.text_input(
-            "🔍 Search ANY City or Locality in the World (e.g. Delhi, London, Mumbai, New York, Tokyo):",
+            "🔍 Search ANY City or Locality in the World (e.g. Delhi, London, Mumbai, New York, Tokyo, Jaipur):",
             placeholder="Type any city or neighborhood name...",
             label_visibility="visible"
         )
@@ -381,45 +422,22 @@ with search_container:
         with st.spinner(f"Geocoding and retrieving live environmental data for '{search_query}'..."):
             lat, lon, resolved_name = geocode_location(search_query)
             if lat is not None and lon is not None:
-                aqi, pm25, pm10 = fetch_live_aqi(lat, lon)
-                current_hour = datetime.now().hour
-                est_noise = estimate_urban_noise(current_hour)
-                time_label = "Morning" if 6 <= current_hour < 12 else ("Afternoon" if 12 <= current_hour < 17 else ("Evening" if 17 <= current_hour < 21 else "Night"))
-
-                if aqi is not None:
-                    save_air_reading(resolved_name, lat, lon, aqi)
-                    save_noise_reading(
-                        resolved_name,
-                        lat,
-                        lon,
-                        est_noise,
-                        date.today().isoformat(),
-                        time_label,
-                        f"Estimated Baseline (WHO Urban Traffic Model, {time_label})"
-                    )
-
-                    st.cache_data.clear()
-                    st.session_state.map_center = {"lat": lat, "lon": lon}
-                    st.session_state.map_zoom = 12
-                    st.session_state.sidebar_lat = lat
-                    st.session_state.sidebar_lon = lon
-                    st.session_state.sidebar_locality = resolved_name
-
-                    pm_info = f" | PM2.5: {pm25} µg/m³" if pm25 is not None else ""
+                ok, aqi_val, noise_val = activate_and_load_locality(resolved_name, lat, lon, is_user_location=False)
+                if ok:
                     st.success(
                         f"📍 Located **{resolved_name}** ({lat:.4f}, {lon:.4f})! "
-                        f"Live AQI: **{int(round(aqi))}** ({aqi_label(aqi)}){pm_info} | "
-                        f"Urban Noise Baseline: **{est_noise:.1f} dB**. "
-                        "Mapped below!"
+                        f"Live AQI: **{int(round(aqi_val))}** ({aqi_label(aqi_val)}) | "
+                        f"Urban Noise Baseline: **{noise_val:.1f} dB**. "
+                        "Dashboard updated below!"
                     )
                     st.rerun()
                 else:
                     st.session_state.map_center = {"lat": lat, "lon": lon}
                     st.session_state.map_zoom = 12
-                    st.warning(f"Located {resolved_name}, but live AQI was unreachable. Map centered on coordinates.")
+                    st.warning(f"Located {resolved_name}, but live environmental sensors were unreachable.")
                     st.rerun()
             else:
-                st.error(f"Could not find coordinates for '{search_query}'. Please verify spelling.")
+                st.error(f"Could not find coordinates for '{search_query}'. Please verify spelling or try a major nearby city.")
 
 st.divider()
 
@@ -428,7 +446,7 @@ air_df = load_air_data()
 noise_df = load_noise_data()
 
 if air_df.empty and noise_df.empty:
-    st.warning("No data available yet. Use the search bar above to map any city!")
+    st.warning("No data available yet. Use the search bar or 'Jump to My Location' in the sidebar to populate the dashboard!")
     st.stop()
 
 # Compute latest snapshot per locality for air
@@ -465,41 +483,51 @@ combined_df["source_display"] = combined_df["notes"].apply(
     lambda x: "Verified Field Data" if "Field Measurement" in str(x) else ("Estimated Urban Model" if "Estimated" in str(x) else "Field Observation")
 )
 
-# ---------------- Key Metric Cards (Personalized to User Locality) ----------------
+# If active locality wasn't set, default to the first one in combined_df
+if not st.session_state.active_locality and not combined_df.empty:
+    st.session_state.active_locality = combined_df.iloc[0]["locality"]
+    st.session_state.active_lat = float(combined_df.iloc[0]["lat"])
+    st.session_state.active_lon = float(combined_df.iloc[0]["lon"])
+    st.session_state.active_aqi = combined_df.iloc[0]["aqi"]
+    st.session_state.active_noise = combined_df.iloc[0]["decibel"]
+
+# Resolve active locality details
+active_row = combined_df[combined_df["locality"] == st.session_state.active_locality]
+if not active_row.empty:
+    disp_aqi = active_row.iloc[0]["aqi"]
+    disp_noise = active_row.iloc[0]["decibel"]
+else:
+    disp_aqi = st.session_state.active_aqi
+    disp_noise = st.session_state.active_noise
+
+# ---------------- Key Metric Cards (Personalized to Active Locality) ----------------
 m1, m2, m3, m4 = st.columns(4)
 
-total_localities = len(combined_df)
-m1.metric("Localities Monitored", total_localities)
+loc_title = st.session_state.active_locality.split(",")[0].strip() if st.session_state.active_locality else "Active Locality"
 
-# Check if user's locality is available
-user_air_row = latest_air[latest_air["locality"] == st.session_state.user_full_location] if st.session_state.user_full_location else pd.DataFrame()
-user_noise_row = latest_noise[latest_noise["locality"] == st.session_state.user_full_location] if st.session_state.user_full_location else pd.DataFrame()
+# Metric 1: Locality Name & Overview
+m1.metric("📍 Active Locality", loc_title, f"Total Monitored: {len(combined_df)}")
 
-if not user_air_row.empty:
-    local_aqi = user_air_row.iloc[0]["aqi"]
-    m2.metric(f"Your City AQI ({st.session_state.user_city})", f"{local_aqi:.0f}", aqi_label(local_aqi), delta_color="inverse")
-elif not latest_air.empty:
-    avg_aqi = latest_air["aqi"].mean()
-    m2.metric("Average AQI", f"{avg_aqi:.0f}", aqi_label(avg_aqi), delta_color="inverse")
+# Metric 2: Locality Air Quality
+if pd.notna(disp_aqi):
+    m2.metric("🌫️ Locality AQI", f"{float(disp_aqi):.0f}", aqi_label(float(disp_aqi)), delta_color="inverse")
 else:
-    m2.metric("Average AQI", "—")
+    m2.metric("🌫️ Locality AQI", "—")
 
-if not user_noise_row.empty:
-    local_noise = user_noise_row.iloc[0]["decibel"]
-    who_delta = f"{local_noise - 55:+.1f} dB vs WHO limit (55 dB)"
-    m3.metric(f"Your City Noise ({st.session_state.user_city})", f"{local_noise:.1f} dB", who_delta, delta_color="inverse")
-elif not latest_noise.empty:
-    avg_noise = latest_noise["decibel"].mean()
-    who_delta = f"{avg_noise - 55:+.1f} dB vs WHO limit (55 dB)"
-    m3.metric("Average Noise Level", f"{avg_noise:.1f} dB", who_delta, delta_color="inverse")
+# Metric 3: Locality Noise Level
+if pd.notna(disp_noise):
+    noise_f = float(disp_noise)
+    who_diff = f"{noise_f - 55:+.1f} dB vs WHO day limit (55 dB)"
+    m3.metric("🔊 Locality Sound Level", f"{noise_f:.1f} dB", who_diff, delta_color="inverse")
 else:
-    m3.metric("Average Noise Level", "—")
+    m3.metric("🔊 Locality Sound Level", "—")
 
-if not latest_air.empty:
-    worst_station = latest_air.loc[latest_air["aqi"].idxmax()]
-    m4.metric("Highest Pollution Hotspot", f"{worst_station['aqi']:.0f}", worst_station["locality"], delta_color="inverse")
-else:
-    m4.metric("Highest Pollution Hotspot", "—")
+# Metric 4: Health Advisory
+advisory_text = health_recommendation(disp_aqi, disp_noise)
+m4.metric("🏥 Environmental Status", aqi_label(float(disp_aqi)) if pd.notna(disp_aqi) else "Monitoring", advisory_text.split(":")[0])
+
+# Full advisory banner
+st.caption(f"**Health & Civic Advisory**: {advisory_text}")
 
 st.divider()
 
@@ -516,25 +544,22 @@ with col_m1:
 
 with col_m2:
     all_places = sorted(combined_df["locality"].dropna().unique().tolist())
-    default_idx = 0
-    if st.session_state.user_full_location and st.session_state.user_full_location in all_places:
-        focus_options = ["Your Location: " + st.session_state.user_full_location, "All Localities (Auto-fit)"] + [p for p in all_places if p != st.session_state.user_full_location]
-    else:
-        focus_options = ["All Localities (Auto-fit)"] + all_places
+    curr_active = st.session_state.active_locality if st.session_state.active_locality in all_places else (all_places[0] if all_places else "")
+    curr_idx = all_places.index(curr_active) if curr_active in all_places else 0
 
-    selected_focus = st.selectbox("📍 Jump Map Focus To:", focus_options, index=0)
+    selected_focus = st.selectbox("📍 Select / Switch Active Locality:", all_places, index=curr_idx)
 
-    if selected_focus.startswith("Your Location: "):
-        clean_name = selected_focus.replace("Your Location: ", "")
-        target_row = combined_df[combined_df["locality"] == clean_name]
-        if not target_row.empty and pd.notna(target_row.iloc[0]["lat"]):
-            st.session_state.map_center = {"lat": float(target_row.iloc[0]["lat"]), "lon": float(target_row.iloc[0]["lon"])}
-            st.session_state.map_zoom = 12
-    elif selected_focus != "All Localities (Auto-fit)":
-        target_row = combined_df[combined_df["locality"] == selected_focus]
-        if not target_row.empty and pd.notna(target_row.iloc[0]["lat"]):
-            st.session_state.map_center = {"lat": float(target_row.iloc[0]["lat"]), "lon": float(target_row.iloc[0]["lon"])}
-            st.session_state.map_zoom = 12
+    if selected_focus and selected_focus != st.session_state.active_locality:
+        t_row = combined_df[combined_df["locality"] == selected_focus]
+        if not t_row.empty and pd.notna(t_row.iloc[0]["lat"]):
+            st.session_state.active_locality = selected_focus
+            st.session_state.active_lat = float(t_row.iloc[0]["lat"])
+            st.session_state.active_lon = float(t_row.iloc[0]["lon"])
+            st.session_state.active_aqi = t_row.iloc[0]["aqi"]
+            st.session_state.active_noise = t_row.iloc[0]["decibel"]
+            st.session_state.map_center = {"lat": float(t_row.iloc[0]["lat"]), "lon": float(t_row.iloc[0]["lon"])}
+            st.session_state.map_zoom = 13
+            st.rerun()
 
 # ---------------- Render Map ----------------
 layout_kwargs = {
@@ -543,7 +568,10 @@ layout_kwargs = {
 }
 if st.session_state.map_center:
     layout_kwargs["map_center"] = st.session_state.map_center
-    layout_kwargs["map_zoom"] = st.session_state.map_zoom or 11
+    layout_kwargs["map_zoom"] = st.session_state.map_zoom or 12
+elif st.session_state.active_lat and st.session_state.active_lon:
+    layout_kwargs["map_center"] = {"lat": st.session_state.active_lat, "lon": st.session_state.active_lon}
+    layout_kwargs["map_zoom"] = 12
 else:
     layout_kwargs["map_zoom"] = 10
 
