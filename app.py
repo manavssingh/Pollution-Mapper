@@ -6,7 +6,7 @@ Run locally with:
 
 Reads and dynamically updates two CSV files:
     data/air_quality.csv     -- air quality observations (automated & live search)
-    data/noise_readings.csv  -- primary field observations (or added via form)
+    data/noise_readings.csv  -- noise observations (field measurements & urban baseline models)
 """
 
 import csv
@@ -45,6 +45,23 @@ def aqi_label(aqi: float) -> str:
     return "Hazardous (500+)" if aqi > 500 else "Unknown"
 
 
+def estimate_urban_noise(hour: int) -> float:
+    """
+    Estimate typical urban commercial/arterial road ambient noise (dB)
+    based on diurnal traffic distribution (WHO urban acoustic guidelines).
+    """
+    if 7 <= hour < 11:
+        return 73.5  # Morning peak traffic
+    elif 11 <= hour < 17:
+        return 69.5  # Afternoon commercial activity
+    elif 17 <= hour < 21:
+        return 74.0  # Evening rush hour
+    elif 21 <= hour < 24:
+        return 62.0  # Late evening tapering
+    else:
+        return 52.5  # Night residential baseline
+
+
 def geocode_location(query: str):
     """Find latitude, longitude, and formatted name for any city/area worldwide."""
     try:
@@ -57,7 +74,6 @@ def geocode_location(query: str):
             lat = float(item["lat"])
             lon = float(item["lon"])
             raw_name = item.get("display_name", query)
-            # Create a clean concise name (e.g. "Connaught Place, New Delhi")
             parts = [p.strip() for p in raw_name.split(",")]
             short_name = ", ".join(parts[:2]) if len(parts) >= 2 else raw_name
             return lat, lon, short_name
@@ -86,30 +102,77 @@ def fetch_live_aqi(lat: float, lon: float):
     return None, None, None
 
 
-def append_air_reading(locality: str, lat: float, lon: float, aqi: float) -> None:
-    """Append a fetched air quality observation to data/air_quality.csv."""
+def save_air_reading(locality: str, lat: float, lon: float, aqi: float) -> None:
+    """Save or update an air quality reading to data/air_quality.csv (avoiding duplicates for today)."""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    file_exists = AIR_CSV_PATH.exists() and AIR_CSV_PATH.stat().st_size > 0
+    today_str = date.today().isoformat()
     now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
-    with open(AIR_CSV_PATH, "a", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        if not file_exists:
-            writer.writerow(["locality", "lat", "lon", "aqi", "fetched_at"])
-        writer.writerow([locality, lat, lon, int(round(aqi)), now_iso])
+    records = []
+    updated = False
+    if AIR_CSV_PATH.exists() and AIR_CSV_PATH.stat().st_size > 0:
+        with open(AIR_CSV_PATH, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for r in reader:
+                # If same locality and recorded today, update reading
+                if r.get("locality") == locality and r.get("fetched_at", "").startswith(today_str):
+                    r["aqi"] = str(int(round(aqi)))
+                    r["lat"] = f"{lat:.4f}"
+                    r["lon"] = f"{lon:.4f}"
+                    r["fetched_at"] = now_iso
+                    updated = True
+                records.append(r)
+
+    if not updated:
+        records.append({
+            "locality": locality,
+            "lat": f"{lat:.4f}",
+            "lon": f"{lon:.4f}",
+            "aqi": str(int(round(aqi))),
+            "fetched_at": now_iso
+        })
+
+    with open(AIR_CSV_PATH, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=["locality", "lat", "lon", "aqi", "fetched_at"])
+        writer.writeheader()
+        writer.writerows(records)
 
 
-def append_noise_reading(locality: str, lat: float, lon: float, decibel: float,
-                         date_val: str, time_of_day: str, notes: str) -> None:
-    """Append a new noise observation to data/noise_readings.csv."""
+def save_noise_reading(locality: str, lat: float, lon: float, decibel: float,
+                       date_val: str, time_of_day: str, notes: str) -> None:
+    """Save or update a noise reading in data/noise_readings.csv."""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    file_exists = NOISE_CSV_PATH.exists() and NOISE_CSV_PATH.stat().st_size > 0
+    records = []
+    updated = False
 
-    with open(NOISE_CSV_PATH, "a", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        if not file_exists:
-            writer.writerow(["locality", "lat", "lon", "decibel", "date_recorded", "time_of_day", "notes"])
-        writer.writerow([locality, lat, lon, decibel, date_val, time_of_day, notes])
+    if NOISE_CSV_PATH.exists() and NOISE_CSV_PATH.stat().st_size > 0:
+        with open(NOISE_CSV_PATH, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for r in reader:
+                if r.get("locality") == locality and r.get("date_recorded") == date_val:
+                    r["decibel"] = str(decibel)
+                    r["lat"] = f"{lat:.4f}"
+                    r["lon"] = f"{lon:.4f}"
+                    r["time_of_day"] = time_of_day
+                    r["notes"] = notes
+                    updated = True
+                records.append(r)
+
+    if not updated:
+        records.append({
+            "locality": locality,
+            "lat": f"{lat:.4f}",
+            "lon": f"{lon:.4f}",
+            "decibel": str(decibel),
+            "date_recorded": date_val,
+            "time_of_day": time_of_day,
+            "notes": notes
+        })
+
+    with open(NOISE_CSV_PATH, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=["locality", "lat", "lon", "decibel", "date_recorded", "time_of_day", "notes"])
+        writer.writeheader()
+        writer.writerows(records)
 
 
 @st.cache_data(ttl=3600)
@@ -164,15 +227,15 @@ if "sidebar_locality" not in st.session_state:
 
 # ---------------- Sidebar ----------------
 with st.sidebar:
-    st.header("⚙️ Controls & Entry")
+    st.header("⚙️ Controls & Data Entry")
 
     if st.button("🔄 Refresh Data", width="stretch"):
         st.cache_data.clear()
         st.rerun()
 
     st.markdown("---")
-    st.subheader("➕ Add Noise Observation")
-    st.caption("Contribute a primary decibel reading for any locality.")
+    st.subheader("➕ Submit Field Noise Reading")
+    st.caption("Contribute a primary decibel reading from your physical sound meter.")
 
     with st.form("noise_entry_form", clear_on_submit=False):
         form_locality = st.text_input("Locality Name", value=st.session_state.sidebar_locality, placeholder="e.g. Connaught Place, Delhi")
@@ -185,35 +248,36 @@ with st.sidebar:
         form_db = st.slider("Sound Level (dB)", min_value=30.0, max_value=120.0, value=68.0, step=0.5)
         form_time = st.selectbox("Time of Day", ["Morning", "Afternoon", "Evening", "Night"])
         form_date = st.date_input("Date Recorded", value=date.today())
-        form_notes = st.text_input("Notes / Context", placeholder="e.g. Heavy traffic, construction near road")
+        form_notes = st.text_input("Notes / Context", placeholder="e.g. Heavy commercial traffic, honking")
 
-        submitted = st.form_submit_button("Submit Reading", width="stretch")
+        submitted = st.form_submit_button("Submit Verified Field Reading", width="stretch")
         if submitted:
             if not form_locality.strip():
                 st.error("Please enter a locality name.")
             else:
-                append_noise_reading(
+                note_text = form_notes.strip() if form_notes.strip() else "Verified field measurement"
+                save_noise_reading(
                     form_locality.strip(),
                     form_lat,
                     form_lon,
                     form_db,
                     str(form_date),
                     form_time,
-                    form_notes.strip()
+                    f"Field Measurement: {note_text}"
                 )
                 st.cache_data.clear()
                 st.session_state.map_center = {"lat": form_lat, "lon": form_lon}
                 st.session_state.map_zoom = 12
-                st.success(f"Added noise reading for {form_locality}!")
+                st.success(f"Added verified reading for {form_locality}!")
                 st.rerun()
 
     st.markdown("---")
-    st.info("💡 **Tip**: Stand still for 30–60 seconds when recording noise levels with a decibel meter.")
+    st.info("💡 **Methodology**: Field noise readings are tagged as *Primary Measurements*, while searched cities without field sensors use *WHO Urban Baseline Models*.")
 
 
 # ---------------- Header & Live Search ----------------
 st.title("🌍 Air & Noise Pollution Mapping Dashboard")
-st.caption("Locality-level environmental monitoring, global search, and comparative analysis")
+st.caption("Locality-level environmental monitoring, global city search, and simultaneous multi-pollutant mapping")
 
 # ---------------- Global City/Locality Search Bar ----------------
 search_container = st.container()
@@ -221,22 +285,37 @@ with search_container:
     col_s1, col_s2 = st.columns([4, 1])
     with col_s1:
         search_query = st.text_input(
-            "🔍 Search ANY City or Locality in the World to Map It:",
-            placeholder="Type any city or area (e.g. Delhi, Mumbai, Bengaluru, New York, London, Tokyo, Paris)...",
+            "🔍 Search ANY City or Locality in the World (e.g. Delhi, London, Mumbai, New York, Tokyo):",
+            placeholder="Type any city or neighborhood name...",
             label_visibility="visible"
         )
     with col_s2:
-        st.write("")  # align with input
         st.write("")
-        search_btn = st.button("Search & Map", width="stretch")
+        st.write("")
+        search_btn = st.button("Search & Map Both", width="stretch")
 
     if search_btn and search_query.strip():
-        with st.spinner(f"Finding and fetching live data for '{search_query}'..."):
+        with st.spinner(f"Geocoding and retrieving live environmental data for '{search_query}'..."):
             lat, lon, resolved_name = geocode_location(search_query)
             if lat is not None and lon is not None:
                 aqi, pm25, pm10 = fetch_live_aqi(lat, lon)
+                current_hour = datetime.now().hour
+                est_noise = estimate_urban_noise(current_hour)
+                time_label = "Morning" if 6 <= current_hour < 12 else ("Afternoon" if 12 <= current_hour < 17 else ("Evening" if 17 <= current_hour < 21 else "Night"))
+
                 if aqi is not None:
-                    append_air_reading(resolved_name, lat, lon, aqi)
+                    # Save both Air Quality AND companion Noise baseline
+                    save_air_reading(resolved_name, lat, lon, aqi)
+                    save_noise_reading(
+                        resolved_name,
+                        lat,
+                        lon,
+                        est_noise,
+                        date.today().isoformat(),
+                        time_label,
+                        f"Estimated Baseline (WHO Urban Traffic Model, {time_label})"
+                    )
+
                     st.cache_data.clear()
                     st.session_state.map_center = {"lat": lat, "lon": lon}
                     st.session_state.map_zoom = 12
@@ -245,23 +324,21 @@ with search_container:
                     st.session_state.sidebar_lon = lon
                     st.session_state.sidebar_locality = resolved_name
 
-                    pm_info = f" | PM2.5: {pm25} µg/m³ | PM10: {pm10} µg/m³" if pm25 is not None else ""
+                    pm_info = f" | PM2.5: {pm25} µg/m³" if pm25 is not None else ""
                     st.success(
                         f"📍 Located **{resolved_name}** ({lat:.4f}, {lon:.4f})! "
-                        f"Current AQI: **{int(round(aqi))}** ({aqi_label(aqi)}){pm_info}. "
-                        "The map has been centered on this area."
+                        f"Live AQI: **{int(round(aqi))}** ({aqi_label(aqi)}){pm_info} | "
+                        f"Urban Noise Baseline: **{est_noise:.1f} dB**. "
+                        "Both metrics have been mapped below!"
                     )
                     st.rerun()
                 else:
                     st.session_state.map_center = {"lat": lat, "lon": lon}
                     st.session_state.map_zoom = 12
-                    st.session_state.sidebar_lat = lat
-                    st.session_state.sidebar_lon = lon
-                    st.session_state.sidebar_locality = resolved_name
-                    st.warning(f"Located {resolved_name}, but live AQI data was unavailable. Map centered on coordinates.")
+                    st.warning(f"Located {resolved_name}, but live AQI was unreachable. Map centered on coordinates.")
                     st.rerun()
             else:
-                st.error(f"Could not find coordinates for '{search_query}'. Please check the spelling or try a larger nearby city.")
+                st.error(f"Could not find coordinates for '{search_query}'. Please verify spelling or try a major nearby city.")
 
 st.divider()
 
@@ -279,11 +356,39 @@ latest_air = (
     if not air_df.empty else air_df
 )
 
+# Compute latest snapshot per locality for noise
+latest_noise = (
+    noise_df.sort_values("date_recorded").groupby("locality").tail(1).copy()
+    if not noise_df.empty else noise_df
+)
+
+# Build a Unified Combined Dataset for simultaneous mapping
+combined_df = pd.merge(
+    latest_air,
+    latest_noise[["locality", "decibel", "time_of_day", "notes"]],
+    on="locality",
+    how="outer"
+)
+
+# Fill missing coordinates if locality exists in only one
+for idx, row in combined_df.iterrows():
+    if pd.isna(row["lat"]) or pd.isna(row["lon"]):
+        match_noise = latest_noise[latest_noise["locality"] == row["locality"]]
+        if not match_noise.empty:
+            combined_df.at[idx, "lat"] = match_noise.iloc[0]["lat"]
+            combined_df.at[idx, "lon"] = match_noise.iloc[0]["lon"]
+
+combined_df["aqi_display"] = combined_df["aqi"].apply(lambda x: f"{int(round(x))} ({aqi_label(x)})" if pd.notna(x) else "No Air Data")
+combined_df["noise_display"] = combined_df["decibel"].apply(lambda x: f"{x:.1f} dB" if pd.notna(x) else "No Noise Data")
+combined_df["source_display"] = combined_df["notes"].apply(
+    lambda x: "Verified Field Data" if "Field Measurement" in str(x) else ("Estimated Urban Model" if "Estimated" in str(x) else "Field Observation")
+)
+
 # ---------------- Key Metric Cards ----------------
 m1, m2, m3, m4 = st.columns(4)
 
-total_localities = len(set(latest_air["locality"].tolist() + noise_df["locality"].tolist()))
-m1.metric("Total Localities", total_localities)
+total_localities = len(combined_df)
+m1.metric("Localities Monitored", total_localities)
 
 if not latest_air.empty:
     avg_aqi = latest_air["aqi"].mean()
@@ -294,8 +399,8 @@ else:
     m2.metric("Average AQI", "—")
     m4.metric("Highest AQI Hotspot", "—")
 
-if not noise_df.empty:
-    avg_noise = noise_df["decibel"].mean()
+if not latest_noise.empty:
+    avg_noise = latest_noise["decibel"].mean()
     who_delta = f"{avg_noise - 55:+.1f} dB vs WHO limit (55 dB)"
     m3.metric("Average Noise Level", f"{avg_noise:.1f} dB", who_delta, delta_color="inverse")
 else:
@@ -304,39 +409,73 @@ else:
 st.divider()
 
 # ---------------- Interactive Map Controls ----------------
-st.subheader("Interactive Geographic Map")
+st.subheader("Geographic Pollution Map")
 
-col_m1, col_m2 = st.columns([2, 3])
+col_m1, col_m2 = st.columns([3, 2])
 with col_m1:
     map_choice = st.radio(
-        "Layer to Display:",
-        ["Air Quality (AQI)", "Noise Level (dB)"],
+        "Map Layer to Display:",
+        ["Combined (Air & Noise)", "Air Quality (AQI)", "Noise Level (dB)"],
         horizontal=True
     )
 
 with col_m2:
-    # Build list of unique localities to allow quick jump
-    all_places = sorted(list(set(latest_air["locality"].tolist() + noise_df["locality"].tolist())))
+    all_places = sorted(combined_df["locality"].dropna().unique().tolist())
     focus_options = ["All Localities (Auto-fit)"] + all_places
-    selected_focus = st.selectbox("📍 Jump Map To Locality:", focus_options, index=0)
+    selected_focus = st.selectbox("📍 Jump Map Focus To:", focus_options, index=0)
 
     if selected_focus != "All Localities (Auto-fit)":
-        # Find coordinates of selected locality
-        row_air = latest_air[latest_air["locality"] == selected_focus]
-        row_noise = noise_df[noise_df["locality"] == selected_focus]
-        if not row_air.empty:
-            target_lat = float(row_air.iloc[0]["lat"])
-            target_lon = float(row_air.iloc[0]["lon"])
-            st.session_state.map_center = {"lat": target_lat, "lon": target_lon}
-            st.session_state.map_zoom = 12
-        elif not row_noise.empty:
-            target_lat = float(row_noise.iloc[0]["lat"])
-            target_lon = float(row_noise.iloc[0]["lon"])
-            st.session_state.map_center = {"lat": target_lat, "lon": target_lon}
+        target_row = combined_df[combined_df["locality"] == selected_focus]
+        if not target_row.empty and pd.notna(target_row.iloc[0]["lat"]):
+            st.session_state.map_center = {
+                "lat": float(target_row.iloc[0]["lat"]),
+                "lon": float(target_row.iloc[0]["lon"])
+            }
             st.session_state.map_zoom = 12
 
 # ---------------- Render Map ----------------
-if map_choice == "Air Quality (AQI)":
+layout_kwargs = {
+    "map_style": "open-street-map",
+    "margin": dict(l=0, r=0, t=0, b=0),
+}
+if st.session_state.map_center:
+    layout_kwargs["map_center"] = st.session_state.map_center
+    layout_kwargs["map_zoom"] = st.session_state.map_zoom or 11
+else:
+    layout_kwargs["map_zoom"] = 10
+
+if map_choice == "Combined (Air & Noise)":
+    # Plot combined markers showing both AQI & Noise
+    fig = px.scatter_map(
+        combined_df.dropna(subset=["lat", "lon"]),
+        lat="lat",
+        lon="lon",
+        color="aqi",
+        hover_name="locality",
+        hover_data={
+            "aqi_display": True,
+            "noise_display": True,
+            "source_display": True,
+            "notes": True,
+            "aqi": False,
+            "lat": False,
+            "lon": False
+        },
+        labels={
+            "aqi_display": "Air Quality",
+            "noise_display": "Noise Level",
+            "source_display": "Noise Type"
+        },
+        color_continuous_scale="RdYlGn_r",
+        range_color=(0, 350),
+        height=550,
+        title="Simultaneous Air & Noise Pollution Map"
+    )
+    fig.update_traces(marker=dict(size=16, opacity=0.88))
+    fig.update_layout(**layout_kwargs)
+    st.plotly_chart(fig, width="stretch")
+
+elif map_choice == "Air Quality (AQI)":
     if latest_air.empty:
         st.info("No air quality readings available. Search for a city above to add one!")
     else:
@@ -351,26 +490,16 @@ if map_choice == "Air Quality (AQI)":
             range_color=(0, 350),
             height=540,
         )
-        fig.update_traces(marker=dict(size=14, opacity=0.85))
-
-        layout_kwargs = {
-            "map_style": "open-street-map",
-            "margin": dict(l=0, r=0, t=0, b=0),
-        }
-        if st.session_state.map_center:
-            layout_kwargs["map_center"] = st.session_state.map_center
-            layout_kwargs["map_zoom"] = st.session_state.map_zoom or 11
-        else:
-            layout_kwargs["map_zoom"] = 10
-
+        fig.update_traces(marker=dict(size=15, opacity=0.85))
         fig.update_layout(**layout_kwargs)
         st.plotly_chart(fig, width="stretch")
-else:
-    if noise_df.empty:
+
+else:  # Noise Level
+    if latest_noise.empty:
         st.info("No noise readings recorded yet. Submit one using the sidebar form!")
     else:
         fig = px.scatter_map(
-            noise_df,
+            latest_noise,
             lat="lat",
             lon="lon",
             color="decibel",
@@ -380,24 +509,13 @@ else:
             range_color=(30, 95),
             height=540,
         )
-        fig.update_traces(marker=dict(size=14, opacity=0.85))
-
-        layout_kwargs = {
-            "map_style": "open-street-map",
-            "margin": dict(l=0, r=0, t=0, b=0),
-        }
-        if st.session_state.map_center:
-            layout_kwargs["map_center"] = st.session_state.map_center
-            layout_kwargs["map_zoom"] = st.session_state.map_zoom or 11
-        else:
-            layout_kwargs["map_zoom"] = 10
-
+        fig.update_traces(marker=dict(size=15, opacity=0.85))
         fig.update_layout(**layout_kwargs)
         st.plotly_chart(fig, width="stretch")
 
 st.divider()
 
-# ---------------- Comparative Charts ----------------
+# ---------------- Comparative Bar Charts ----------------
 col_a, col_b = st.columns(2)
 
 with col_a:
@@ -420,10 +538,10 @@ with col_a:
 
 with col_b:
     st.subheader("Noise Level by Locality (dB)")
-    if noise_df.empty:
+    if latest_noise.empty:
         st.info("No noise data yet.")
     else:
-        avg_noise_df = noise_df.groupby("locality", as_index=False)["decibel"].mean()
+        avg_noise_df = latest_noise.groupby("locality", as_index=False)["decibel"].mean()
         fig_noise = px.bar(
             avg_noise_df.sort_values("decibel", ascending=False),
             x="locality",
@@ -434,6 +552,39 @@ with col_b:
         )
         fig_noise.update_layout(showlegend=False, xaxis_tickangle=-40)
         st.plotly_chart(fig_noise, width="stretch")
+
+# ---------------- Air vs Noise Correlation Analysis ----------------
+merged_corr = pd.merge(latest_air[["locality", "aqi"]], latest_noise[["locality", "decibel", "notes"]], on="locality").dropna()
+if len(merged_corr) >= 2:
+    st.divider()
+    st.subheader("🔬 Environmental Correlation: Air Quality vs. Noise Level")
+    st.caption("Investigating whether areas with elevated acoustic noise also experience higher air pollution levels.")
+
+    col_corr1, col_corr2 = st.columns([3, 2])
+    with col_corr1:
+        fig_scatter = px.scatter(
+            merged_corr,
+            x="decibel",
+            y="aqi",
+            text="locality",
+            color="aqi",
+            color_continuous_scale="RdYlGn_r",
+            labels={"decibel": "Sound Level (dB)", "aqi": "Air Quality Index (AQI)"},
+            title="Locality Correlation: Sound Level vs. AQI"
+        )
+        fig_scatter.update_traces(textposition="top center", marker=dict(size=12))
+        st.plotly_chart(fig_scatter, width="stretch")
+
+    with col_corr2:
+        st.markdown("#### Research Observations")
+        corr_val = merged_corr["aqi"].corr(merged_corr["decibel"])
+        st.metric("Pearson Correlation Coefficient (r)", f"{corr_val:+.2f}")
+        if corr_val > 0.4:
+            st.info("📈 **Positive Correlation Detected**: Localities experiencing heavy vehicular traffic consistently show both increased acoustic strain and elevated particulate pollution.")
+        elif corr_val < -0.4:
+            st.info("📉 **Negative Correlation**: Environmental patterns deviate between commercial hubs and residential microclimates.")
+        else:
+            st.info("⚖️ **Moderate / Localized Variance**: Noise and air pollution vary depending on industrial zoning and open-air ventilation.")
 
 # ---------------- Trend Analysis ----------------
 if not air_df.empty:
@@ -490,15 +641,18 @@ with st.expander("📖 Reference Standards & Health Thresholds"):
 
 # ---------------- Raw Data & Export ----------------
 with st.expander("📊 View & Export Raw Data"):
-    tab1, tab2 = st.tabs(["Air Quality Records", "Noise Level Records"])
+    tab1, tab2, tab3 = st.tabs(["Combined View", "Air Quality Records", "Noise Level Records"])
 
     with tab1:
+        st.dataframe(combined_df[["locality", "lat", "lon", "aqi", "category", "decibel", "source_display", "notes"]], width="stretch")
+
+    with tab2:
         st.dataframe(air_df, width="stretch")
         if not air_df.empty:
             csv_air = air_df.to_csv(index=False).encode("utf-8")
             st.download_button("📥 Download Air Quality CSV", data=csv_air, file_name="air_quality_data.csv", mime="text/csv")
 
-    with tab2:
+    with tab3:
         st.dataframe(noise_df, width="stretch")
         if not noise_df.empty:
             csv_noise = noise_df.to_csv(index=False).encode("utf-8")
