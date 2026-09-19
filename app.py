@@ -318,12 +318,11 @@ if "sidebar_lon" not in st.session_state:
 if "sidebar_locality" not in st.session_state:
     st.session_state.sidebar_locality = ""
 
-# Auto-detect live user position on very first page load
-if not st.session_state.geo_initialized:
-    detected_city, det_lat, det_lon, det_fullname = detect_client_location()
-    if detected_city and det_lat and det_lon:
-        activate_and_load_locality(det_fullname, det_lat, det_lon, is_user_location=True)
-    st.session_state.geo_initialized = True
+# Deliberately no auto-load-by-IP: this is a local field study, so the
+# dashboard should open on the localities actually surveyed, not on
+# whoever's IP loads the page. "Detect & Load My Live Location" stays
+# available as an opt-in button in the sidebar.
+st.session_state.geo_initialized = True
 
 # ---------------- Sidebar ----------------
 with st.sidebar:
